@@ -60,8 +60,14 @@ func NewWithClient(client *http.Client) *Race {
 
 // Between gets a bunch of requests and makes http request simultaneously to all of them
 // the first answer will be returned
+// if all requests failed, it will return *multierror.Error containing all errors that happened
 func Between(reqs ...*http.Request) (*http.Response, error) {
 	return New().Between(reqs...)
+}
+
+// BetweenWithClient is like Between but gets user's http client
+func BetweenWithClient(client *http.Client, reqs ...*http.Request) (*http.Response, error) {
+	return NewWithClient(client).Between(reqs...)
 }
 
 func (race *Race) makeRequest(onComplete chan *http.Response, onError chan error, req *http.Request) {
