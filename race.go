@@ -2,9 +2,10 @@ package race
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"time"
+
+	"github.com/hashicorp/go-multierror"
 )
 
 // Race between requests
@@ -19,25 +20,30 @@ func (race *Race) Between(reqs ...*http.Request) (*http.Response, error) {
 	defer cancel()
 
 	onComplete := make(chan *http.Response)
+	onError := make(chan error)
 
 	// run all the requests concurrently
 	for _, r := range reqs {
 		req := r.WithContext(ctx)
-		go race.makeRequest(onComplete, req)
+		go race.makeRequest(onComplete, onError, req)
 	}
 
-	if race.client.Timeout > 0 {
-		for {
-			select {
-			case res := <-onComplete:
-				return res, nil
-			case <-ctx.Done():
-				return nil, errors.New("Timeout")
+	var errs []error
+	for {
+		select {
+		case res := <-onComplete:
+			return res, nil
+		case err := <-onError:
+			errs = append(errs, err)
+
+			// all requests failed
+			if len(errs) == len(reqs) {
+				allerrors := &multierror.Error{}
+				multierror.Append(allerrors, errs...)
+				return nil, allerrors
 			}
 		}
 	}
-
-	return <-onComplete, nil
 }
 
 // New returns new race object with default http client
@@ -58,11 +64,14 @@ func Between(reqs ...*http.Request) (*http.Response, error) {
 	return New().Between(reqs...)
 }
 
-func (race *Race) makeRequest(onComplete chan *http.Response, req *http.Request) {
+func (race *Race) makeRequest(onComplete chan *http.Response, onError chan error, req *http.Request) {
 	res, err := race.client.Do(req)
-	if err == nil {
-		onComplete <- res
+	if err != nil {
+		onError <- err
+		return
 	}
+
+	onComplete <- res
 }
 
 func createContext(timeout time.Duration) (context.Context, context.CancelFunc) {
