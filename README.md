@@ -12,7 +12,7 @@ req3, err := http.NewRequest("GET", "backupServer.url", nil)
 res, err := race.Between(req1, req2, req3)
 ```
 Or if you prefer starting a request first and only if it takes too long, starts the other, use `FirstThenStart`:
-```
+```Go
 // First start `req1` and after 1 second start the other requests (req2 and req3)
 res, err := race.FirstThenStart(req1, 1*time.Second, req2, req3)
 ```
