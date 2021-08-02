@@ -46,6 +46,62 @@ func (race *Race) Between(reqs ...*http.Request) (*http.Response, error) {
 	}
 }
 
+// FirstThenStart starts the given requests and if the given timeout elapses or
+// error happens it starts the other requests concurently
+func (race *Race) FirstThenStart(first *http.Request, timeout time.Duration, reqs ...*http.Request) (*http.Response, error) {
+	// the porpuse of this context is to cancel all ongoing requests at the end
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// after this timeout all the other requests should be started
+	ctxFirstTimeout, cancelFirst := context.WithTimeout(context.Background(), timeout)
+	defer cancelFirst()
+
+	onComplete := make(chan *http.Response)
+	onError := make(chan error)
+
+	go race.makeRequest(onComplete, onError, first.WithContext(ctx))
+
+	var firstErr error
+FOR:
+	for {
+		select {
+		case res := <-onComplete:
+			return res, nil
+		case <-ctxFirstTimeout.Done():
+			break FOR
+		case firstErr = <-onError:
+			break FOR
+		}
+	}
+
+	// either timeout or an error happend
+	// start the other requests
+	for _, req := range reqs {
+		go race.makeRequest(onComplete, onError, req.WithContext(ctx))
+	}
+
+	var errs []error
+	for {
+		select {
+		case res := <-onComplete:
+			return res, nil
+		case err := <-onError:
+			errs = append(errs, err)
+
+			// all requests failed
+			if len(errs) == len(reqs) {
+				allerrors := &multierror.Error{}
+				if firstErr != nil {
+					multierror.Append(allerrors, firstErr)
+				}
+				multierror.Append(allerrors, errs...)
+				return nil, allerrors
+			}
+		}
+	}
+}
+
 // New returns new race object with default http client
 func New() *Race {
 	return NewWithClient(http.DefaultClient)
@@ -68,6 +124,12 @@ func Between(reqs ...*http.Request) (*http.Response, error) {
 // BetweenWithClient is like Between but gets user's http client
 func BetweenWithClient(client *http.Client, reqs ...*http.Request) (*http.Response, error) {
 	return NewWithClient(client).Between(reqs...)
+}
+
+// FirstThenStart starts the given requests and if the given timeout elapses or
+// error happens it starts the other requests concurently
+func FirstThenStart(first *http.Request, timeout time.Duration, reqs ...*http.Request) (*http.Response, error) {
+	return New().FirstThenStart(first, timeout, reqs...)
 }
 
 func (race *Race) makeRequest(onComplete chan *http.Response, onError chan error, req *http.Request) {
