@@ -1,3 +1,5 @@
+// Package race provides functionality to call http requests simultaneously
+// and get the result from the fastest one
 package race
 
 import (
